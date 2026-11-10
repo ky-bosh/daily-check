@@ -5,6 +5,12 @@ Parameters:
   GitHubRepo:
     Type: String
     Default: ky-bosh/daily-check
+  GitHubOwner:
+    Type: String
+    Default: ky-bosh
+  GitHubRepoName:
+    Type: String
+    Default: daily-check
   AlertEmail:
     Type: String
     Description: Address for the monthly budget alert
@@ -99,7 +105,10 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepo}:ref:refs/heads/main"
+                # GitHub may send "repo:owner/name:..." or "repo:owner@id/name@id:..."
+                token.actions.githubusercontent.com:sub:
+                  - !Sub "repo:${GitHubRepo}:ref:refs/heads/main"
+                  - !Sub "repo:${GitHubOwner}@*/${GitHubRepoName}@*:ref:refs/heads/main"
       Policies:
         - PolicyName: deploy
           PolicyDocument:
