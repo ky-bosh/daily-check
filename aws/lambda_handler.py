@@ -19,4 +19,4 @@ def handler(event, context):
         return monitor.main()
     except Exception as e:
         print("error:", type(e).__name__, "at", monitor.STAGE)
-        raise RuntimeError(f"check failed at {monitor.STAGE}") from None
+        raise RuntimeError(f"check failed at {monitor.STAGE}: {type(e).__name__}") from None

@@ -135,13 +135,16 @@ def collect():
 
         open_calendar(page)
         pages = []
-        for _ in range(MAX_PAGES):
+        for n in range(MAX_PAGES):
+            stage(f"read-page{n + 1}")
             days = read_days(page)
             pages.append(days)
             marks = [m for _, _, m in days]
             if not days or "抽選" in marks or all(m == "－" for m in marks[-3:]):
                 break
-            postback(page, "period", "next")
+            if n + 1 < MAX_PAGES:  # do not page past the last one we read
+                stage(f"next-page{n + 1}")
+                postback(page, "period", "next")
 
         total = sum(len(d) for d in pages)
         print(f"checked: {total} days / {len(pages)} pages")
@@ -154,8 +157,10 @@ def collect():
             if not avail:
                 continue
             open_calendar(page)
+            stage(f"slots-goto-page{idx + 1}")
             for _ in range(idx):
                 postback(page, "period", "next")
+            stage("slots-select")
             for ymd, rest in avail:
                 page.evaluate(
                     """(v) => {
