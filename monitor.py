@@ -9,6 +9,7 @@ import re
 import os
 import smtplib
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -21,6 +22,7 @@ STATE_BUCKET = os.environ.get("STATE_BUCKET")  # set on AWS: state is kept in S3
 STATE_KEY = "state.json"
 CHROMIUM_ARGS = os.environ.get("CHROMIUM_ARGS", "").split()
 MAX_PAGES = 3
+SLOT_TIME_BUDGET = 100  # seconds spent on time-slot lookups (Lambda timeout is 180)
 JST = timezone(timedelta(hours=9))
 YOUBI = "月火水木金土日"
 
@@ -185,8 +187,14 @@ def _collect():
             avail = [(ymd, rest) for ymd, rest, m in days if m in ("○", "△")]
             for k in range(0, len(avail), CHUNK):
                 jobs.append((idx, avail[k:k + CHUNK]))
+        started = time.monotonic()
         for idx, avail in jobs:
             got = []
+            if time.monotonic() - started > SLOT_TIME_BUDGET:
+                # stay well inside the Lambda timeout: dates-only for the rest
+                SLOT_ERRORS.append(f"page{idx + 1}: skipped (time budget)")
+                slots.extend([(fmt_day(y), "", "時間帯未取得", "○/△") for y, _ in avail])
+                continue
             try:
                 # fresh browser each time: single-process Chromium on Lambda runs out of
                 # resources (net::ERR_INSUFFICIENT_RESOURCES) if one instance is reused
