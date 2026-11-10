@@ -59,21 +59,38 @@ def open_calendar(page):
         page.click("#btnHyoji")
 
 
+TEST_NOTIFY = False  # set by the Lambda handler for an end-to-end test
+ACTIVE_ROOM = None
+
+
 def read_days(page):
-    return page.evaluate(
-        """(room) => {
+    """Return [(yyyymmdd, value-rest, mark)] for the watched room.
+    In test-notify mode, switch once to another room of the same facility that has openings."""
+    global ACTIVE_ROOM
+    rows = page.evaluate(
+        """() => {
         const out = [];
         for (const tr of document.querySelectorAll('table.calendar tr')) {
             const name = tr.querySelector('td.shisetsu');
-            if (!name || !name.innerText.includes(room)) continue;
-            for (const i of tr.querySelectorAll('input[name=checkdate]')) {
-                out.push([i.value.slice(0, 8), i.value.slice(8), i.nextElementSibling.innerText.trim()]);
-            }
+            if (!name) continue;
+            const cells = [...tr.querySelectorAll('input[name=checkdate]')].map(i =>
+                [i.value.slice(0, 8), i.value.slice(8), i.nextElementSibling.innerText.trim()]);
+            if (cells.length) out.push([name.innerText.trim(), cells]);
         }
         return out;
-    }""",
-        ROOM,
+    }"""
     )
+    if ACTIVE_ROOM is None:
+        ACTIVE_ROOM = ROOM
+        if TEST_NOTIFY:
+            for name, cells in rows:
+                if ROOM not in name and any(m in ("○", "△") for _, _, m in cells):
+                    ACTIVE_ROOM = name
+                    break
+    for name, cells in rows:
+        if ACTIVE_ROOM in name:
+            return cells
+    return []
 
 
 def read_slots(page):
@@ -224,7 +241,30 @@ def save_state(now):
     STATE_FILE.write_text(data, "utf-8")
 
 
+def run_test_notify():
+    """End-to-end test on another room that has openings. Does not touch the saved state."""
+    global ACTIVE_ROOM
+    ACTIVE_ROOM = None
+    slots = [list(s) for s in collect()]
+    print(f"test-notify: switched={ACTIVE_ROOM != ROOM} open: {len(slots)}")
+    if not slots:
+        return {"test_notify": True, "open": 0, "sent": False}
+    body = (
+        "【テスト】通知メールの動作確認です。本番の監視対象ではなく、"
+        f"同じ施設で空きのある「{ACTIVE_ROOM}」で、本番と同じ処理を通しました。\n\n"
+        + "\n".join(line(x) for x in slots[:15])
+        + (f"\n…ほか{len(slots)-15}件" if len(slots) > 15 else "")
+        + f"\n\n予約サイト：\n{BASE}"
+    )
+    first = slots[0]
+    send(f"【テスト】【空き通知】{FACILITY} {ACTIVE_ROOM} {first[0]} {first[2]} ほか", body)
+    print("test notify sent")
+    return {"test_notify": True, "open": len(slots), "sent": True}
+
+
 def main():
+    if TEST_NOTIFY:
+        return run_test_notify()
     hour = datetime.now(JST).hour
     if hour < 6 and os.environ.get("TEST_MAIL") != "true":
         print("skip: night hours")

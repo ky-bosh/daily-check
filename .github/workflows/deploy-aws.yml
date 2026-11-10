@@ -7,6 +7,10 @@ on:
         description: "配置後にテストメールを送る"
         type: boolean
         default: true
+      test_notify:
+        description: "空きのある別の部屋で通知メールを通しテストする（本番の記録は変えない）"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -100,7 +104,9 @@ jobs:
         run: |
           P='{}'
           if [ "${{ inputs.test_mail }}" = "true" ]; then P='{"test_mail":true}'; fi
+          if [ "${{ inputs.test_notify }}" = "true" ]; then P='{"test_notify":true}'; fi
           aws lambda invoke --function-name "$FN" --cli-binary-format raw-in-base64-out \
             --cli-read-timeout 200 --payload "$P" out.json --query FunctionError --output text || true
           echo "result: $(cat out.json)"
           grep -q '"open"' out.json || grep -q '"skipped"' out.json
+          if [ "${{ inputs.test_notify }}" = "true" ]; then grep -q '"sent": true' out.json; fi

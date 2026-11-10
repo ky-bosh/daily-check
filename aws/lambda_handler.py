@@ -12,6 +12,9 @@ def handler(event, context):
         os.environ.pop("TEST_MAIL", None)
     import monitor  # reads settings from Lambda environment variables
 
+    monitor.TEST_NOTIFY = bool(event.get("test_notify"))
+    monitor.ACTIVE_ROOM = None
+
     try:
         return monitor.main()
     except Exception as e:
