@@ -1,0 +1,43 @@
+name: diag
+on:
+  workflow_dispatch: {}
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -q -r requirements.txt && python -m playwright install --with-deps chromium > /dev/null
+      - name: Diagnose
+        env:
+          TARGET: ${{ secrets.TARGET }}
+        run: |
+          U="${TARGET%%|*}"
+          echo "--- curl"
+          for i in 1 2 3; do curl -s -o /dev/null -m 30 -w "try$i http=%{http_code} connect=%{time_connect}s first_byte=%{time_starttransfer}s total=%{time_total}s\n" "$U" || echo "try$i failed rc=$?"; done
+          echo "--- runner ip region"
+          curl -s -m 10 https://ipinfo.io/country || true; echo
+          echo "--- browser"
+          python - <<'PY'
+          import os, time
+          from playwright.sync_api import sync_playwright
+          u = os.environ["TARGET"].split("|")[0]
+          with sync_playwright() as p:
+              b = p.chromium.launch(); pg = b.new_page()
+              pending = {}
+              pg.on("request", lambda r: pending.__setitem__(r.url, time.time()))
+              pg.on("requestfinished", lambda r: pending.pop(r.url, None))
+              pg.on("requestfailed", lambda r: pending.pop(r.url, None))
+              for ev in ("commit", "domcontentloaded", "load"):
+                  t = time.time()
+                  try:
+                      pg.goto(u, wait_until=ev, timeout=40000); print(f"{ev}: ok {time.time()-t:.1f}s")
+                  except Exception as e:
+                      print(f"{ev}: {type(e).__name__} {time.time()-t:.1f}s")
+              from urllib.parse import urlparse
+              print("still loading hosts:", sorted({urlparse(x).netloc.split('.')[-2] if '.' in urlparse(x).netloc else '?' for x in pending}))
+              b.close()
+          PY
