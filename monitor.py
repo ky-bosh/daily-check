@@ -179,10 +179,13 @@ def _collect():
             raise RuntimeError("no data read (page layout may have changed)")
 
         slots = []
+        CHUNK = 4  # days per time-slot page: a big page exhausts single-process Chromium
+        jobs = []
         for idx, days in enumerate(pages):
             avail = [(ymd, rest) for ymd, rest, m in days if m in ("○", "△")]
-            if not avail:
-                continue
+            for k in range(0, len(avail), CHUNK):
+                jobs.append((idx, avail[k:k + CHUNK]))
+        for idx, avail in jobs:
             got = []
             try:
                 # fresh browser each time: single-process Chromium on Lambda runs out of
