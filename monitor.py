@@ -130,7 +130,7 @@ def fmt_day(ymd):
 def collect():
     with sync_playwright() as p:
         browser = p.chromium.launch(args=CHROMIUM_ARGS)
-        page = browser.new_page(locale="ja-JP")
+        page = browser.new_context(locale="ja-JP").new_page()
         page.set_default_timeout(30000)
 
         open_calendar(page)
@@ -156,6 +156,10 @@ def collect():
             avail = [(ymd, rest) for ymd, rest, m in days if m in ("○", "△")]
             if not avail:
                 continue
+            # fresh session each time: the site keeps screen state per session
+            page.context.close()
+            page = browser.new_context(locale="ja-JP").new_page()
+            page.set_default_timeout(30000)
             open_calendar(page)
             stage(f"slots-goto-page{idx + 1}")
             for _ in range(idx):
