@@ -185,8 +185,12 @@ def _collect():
                 continue
             got = []
             try:
-                # fresh session each time (the site keeps screen state per session)
-                page.context.clear_cookies()
+                # fresh browser each time: single-process Chromium on Lambda runs out of
+                # resources (net::ERR_INSUFFICIENT_RESOURCES) if one instance is reused
+                browser.close()
+                browser = p.chromium.launch(args=CHROMIUM_ARGS)
+                page = browser.new_page(locale="ja-JP")
+                page.set_default_timeout(30000)
                 open_calendar(page)
                 stage(f"slots-goto-page{idx + 1}")
                 for _ in range(idx):
