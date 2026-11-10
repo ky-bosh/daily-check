@@ -1,8 +1,10 @@
 name: daily-check
 
 on:
+  # Main trigger is an external timer calling workflow_dispatch every 10 min.
+  # This hourly schedule is only a fallback (06:00-23:59 JST).
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "7 0-14,21-23 * * *"
   workflow_dispatch:
     inputs:
       test_mail:

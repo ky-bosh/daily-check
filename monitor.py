@@ -184,6 +184,10 @@ def send_test(now):
 
 
 def main():
+    hour = datetime.now(JST).hour
+    if hour < 6 and os.environ.get("TEST_MAIL") != "true":
+        print("skip: night hours")
+        return
     now = [list(s) for s in collect()]
     prev = json.loads(STATE_FILE.read_text("utf-8")) if STATE_FILE.exists() else []
     new = [s for s in now if s not in prev]
