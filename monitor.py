@@ -5,6 +5,7 @@ Mail settings: GMAIL_USER, GMAIL_APP_PASSWORD, MAIL_TO.
 Logs show counts only.
 """
 import json
+import re
 import os
 import smtplib
 import sys
@@ -57,6 +58,19 @@ def open_calendar(page):
     )
     with page.expect_navigation(wait_until="load"):
         page.click("#btnHyoji")
+
+
+SLOT_ERRORS = []
+
+
+def safe_error(e):
+    """Error text for public logs: no URLs or target names."""
+    t = f"{type(e).__name__}: {e}".splitlines()[0]
+    t = re.sub(r"https?://\S+", "<url>", t)
+    for w in (BASE, CATEGORY, FACILITY, ROOM):
+        if w:
+            t = t.replace(w, "<target>")
+    return t[:200]
 
 
 TEST_NOTIFY = False  # set by the Lambda handler for an end-to-end test
@@ -169,32 +183,34 @@ def _collect():
             avail = [(ymd, rest) for ymd, rest, m in days if m in ("○", "△")]
             if not avail:
                 continue
-            # fresh session each time (the site keeps screen state per session).
-            # Clear cookies instead of opening a new context: safer for single-process Chromium.
-            page.context.clear_cookies()
-            open_calendar(page)
-            stage(f"slots-goto-page{idx + 1}")
-            for _ in range(idx):
-                postback(page, "period", "next")
-            stage("slots-select")
-            for ymd, rest in avail:
-                page.evaluate(
-                    """(v) => {
-                    const i = [...document.querySelectorAll('input[name=checkdate]')]
-                      .find(i => i.value === v);
-                    if (i && !i.checked) i.nextElementSibling.click();
-                }""",
-                    ymd + rest,
-                )
-            stage("slots")
+            got = []
             try:
+                # fresh session each time (the site keeps screen state per session)
+                page.context.clear_cookies()
+                open_calendar(page)
+                stage(f"slots-goto-page{idx + 1}")
+                for _ in range(idx):
+                    postback(page, "period", "next")
+                stage("slots-select")
+                for ymd, rest in avail:
+                    page.evaluate(
+                        """(v) => {
+                        const i = [...document.querySelectorAll('input[name=checkdate]')]
+                          .find(i => i.value === v);
+                        if (i && !i.checked) i.nextElementSibling.click();
+                    }""",
+                        ymd + rest,
+                    )
+                stage("slots")
                 postback(page, "next")
                 got = read_slots(page)
-            except Exception:
-                got = []
+            except Exception as e:
+                SLOT_ERRORS.append(f"page{idx + 1} {STAGE}: {safe_error(e)}")
+                if type(e).__name__ == "TargetClosedError":
+                    raise
             if got:
                 slots.extend(got)
-            else:
+            else:  # never lose a notification: fall back to dates only
                 slots.extend([(fmt_day(y), "", "時間帯未取得", "○/△") for y, _ in avail])
         browser.close()
     return slots
@@ -266,6 +282,7 @@ def run_test_notify():
     """End-to-end test on another room that has openings. Does not touch the saved state."""
     global ACTIVE_ROOM
     ACTIVE_ROOM = None
+    SLOT_ERRORS.clear()
     slots = [list(s) for s in collect()]
     print(f"test-notify: switched={ACTIVE_ROOM != ROOM} open: {len(slots)}")
     if not slots:
@@ -280,10 +297,11 @@ def run_test_notify():
     first = slots[0]
     send(f"【テスト】【空き通知】{FACILITY} {ACTIVE_ROOM} {first[0]} {first[2]} ほか", body)
     print("test notify sent")
-    return {"test_notify": True, "open": len(slots), "sent": True}
+    return {"test_notify": True, "open": len(slots), "sent": True, "slot_errors": SLOT_ERRORS}
 
 
 def main():
+    SLOT_ERRORS.clear()
     if TEST_NOTIFY:
         return run_test_notify()
     hour = datetime.now(JST).hour
@@ -301,7 +319,7 @@ def main():
         send_test(now)
         print("test mail sent")
     save_state(now)
-    return {"open": len(now), "new": len(new)}
+    return {"open": len(now), "new": len(new), "slot_errors": SLOT_ERRORS}
 
 
 if __name__ == "__main__":
