@@ -26,12 +26,26 @@ def postback(page, target, arg=""):
         page.evaluate(f"__doPostBack('{target}','{arg}')")
 
 
+STAGE = "start"
+
+
+def stage(name):
+    global STAGE
+    STAGE = name
+
+
 def open_calendar(page):
+    stage("open")
     page.goto(BASE, wait_until="load")
+    stage("category")
+    btn = page.locator(f"input[type=button][value='{CATEGORY}'], button:text-is('{CATEGORY}')").first
+    btn.wait_for(state="visible")
     with page.expect_navigation(wait_until="load"):
-        page.get_by_role("button", name=CATEGORY).click()
+        btn.click()
+    stage("facility")
     page.locator("label", has_text=FACILITY).first.click()
     postback(page, "next")
+    stage("calendar")
     page.evaluate(
         """() => {
         ['checkYobi6','checkYobi7','checkYobi8'].forEach(id => document.getElementById(id).checked = true);
@@ -131,6 +145,7 @@ def collect():
                 }""",
                     ymd + rest,
                 )
+            stage("slots")
             try:
                 postback(page, "next")
                 got = read_slots(page)
@@ -206,5 +221,5 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        print("error:", type(e).__name__, file=sys.stderr)
+        print("error:", type(e).__name__, "at", STAGE, file=sys.stderr)
         sys.exit(1)
