@@ -4,7 +4,7 @@ on:
 jobs:
   diag:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -15,29 +15,35 @@ jobs:
         env:
           TARGET: ${{ secrets.TARGET }}
         run: |
-          U="${TARGET%%|*}"
-          echo "--- curl"
-          for i in 1 2 3; do curl -s -o /dev/null -m 30 -w "try$i http=%{http_code} connect=%{time_connect}s first_byte=%{time_starttransfer}s total=%{time_total}s\n" "$U" || echo "try$i failed rc=$?"; done
-          echo "--- runner ip region"
-          curl -s -m 10 https://ipinfo.io/country || true; echo
-          echo "--- browser"
-          python - <<'PY'
+          mkdir -p shots
+          python - <<'PY' > shots/result.txt 2>&1 || true
           import os, time
           from playwright.sync_api import sync_playwright
-          u = os.environ["TARGET"].split("|")[0]
+          u, cat, fac, room = [s.strip() for s in os.environ["TARGET"].split("|")]
           with sync_playwright() as p:
-              b = p.chromium.launch(); pg = b.new_page()
-              pending = {}
-              pg.on("request", lambda r: pending.__setitem__(r.url, time.time()))
-              pg.on("requestfinished", lambda r: pending.pop(r.url, None))
-              pg.on("requestfailed", lambda r: pending.pop(r.url, None))
-              for ev in ("commit", "domcontentloaded", "load"):
-                  t = time.time()
-                  try:
-                      pg.goto(u, wait_until=ev, timeout=40000); print(f"{ev}: ok {time.time()-t:.1f}s")
-                  except Exception as e:
-                      print(f"{ev}: {type(e).__name__} {time.time()-t:.1f}s")
-              from urllib.parse import urlparse
-              print("still loading hosts:", sorted({urlparse(x).netloc.split('.')[-2] if '.' in urlparse(x).netloc else '?' for x in pending}))
+              b = p.chromium.launch(); pg = b.new_page(locale="ja-JP", viewport={"width":1280,"height":900})
+              def shot(n): pg.screenshot(path=f"shots/{n}.png", full_page=True)
+              t=time.time()
+              try:
+                  pg.goto(u, wait_until="commit", timeout=40000); print(f"1 commit ok {time.time()-t:.1f}s")
+                  pg.wait_for_load_state("domcontentloaded", timeout=40000); print(f"1 domcontentloaded ok {time.time()-t:.1f}s")
+              except Exception as e: print("1 goto", type(e).__name__, f"{time.time()-t:.1f}s")
+              time.sleep(5); shot("1_top"); print("1 url", pg.url)
+              try:
+                  pg.wait_for_load_state("load", timeout=30000); print(f"1 load ok {time.time()-t:.1f}s")
+              except Exception as e: print("1 load", type(e).__name__)
+              try:
+                  btn = pg.locator(f"input[type=button][value='{cat}'], button:text-is('{cat}')").first
+                  btn.click(timeout=20000); time.sleep(4); shot("2_category"); print("2 url", pg.url)
+                  pg.locator("label", has_text=fac).first.click(timeout=20000)
+                  pg.evaluate("__doPostBack('next','')"); time.sleep(5); shot("3_calendar"); print("3 url", pg.url)
+              except Exception as e:
+                  print("step error", type(e).__name__); shot("x_error")
               b.close()
           PY
+          cat shots/result.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shots
+          path: shots
+          retention-days: 1
