@@ -128,6 +128,19 @@ def fmt_day(ymd):
 
 
 def collect():
+    """Retry once when the browser itself crashes (seen on Lambda)."""
+    try:
+        return _collect()
+    except Exception as e:
+        if type(e).__name__ not in ("TargetClosedError",):
+            raise
+        print("browser crashed, retrying once at", STAGE)
+        global ACTIVE_ROOM
+        ACTIVE_ROOM = None
+        return _collect()
+
+
+def _collect():
     with sync_playwright() as p:
         browser = p.chromium.launch(args=CHROMIUM_ARGS)
         page = browser.new_context(locale="ja-JP").new_page()
