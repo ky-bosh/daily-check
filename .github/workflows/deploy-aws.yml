@@ -1,0 +1,106 @@
+name: deploy-aws
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_mail:
+        description: "配置後にテストメールを送る"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-aws
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  FN: daily-check
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Read setup outputs
+        id: cfn
+        run: |
+          get() { aws cloudformation describe-stacks --stack-name daily-check \
+            --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text; }
+          echo "repo=$(get RepoUri)" >> "$GITHUB_OUTPUT"
+          echo "bucket=$(get BucketName)" >> "$GITHUB_OUTPUT"
+          echo "lrole=$(get LambdaRoleArn)" >> "$GITHUB_OUTPUT"
+          echo "srole=$(get SchedulerRoleArn)" >> "$GITHUB_OUTPUT"
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: img
+        run: |
+          IMG="${{ steps.cfn.outputs.repo }}:${GITHUB_SHA::12}"
+          docker build --provenance=false -f aws/Dockerfile -t "$IMG" .
+          docker push "$IMG" > /dev/null
+          echo "uri=$IMG" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update function
+        env:
+          TARGET: ${{ secrets.TARGET }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          BUCKET: ${{ steps.cfn.outputs.bucket }}
+        run: |
+          python3 - <<'PY' > env.json
+          import json, os
+          keys = ["TARGET", "GMAIL_USER", "GMAIL_APP_PASSWORD", "MAIL_TO"]
+          v = {k: os.environ[k] for k in keys}
+          v["STATE_BUCKET"] = os.environ["BUCKET"]
+          print(json.dumps({"Variables": v}))
+          PY
+          if aws lambda get-function --function-name "$FN" > /dev/null 2>&1; then
+            aws lambda update-function-code --function-name "$FN" --image-uri "${{ steps.img.outputs.uri }}" > /dev/null
+            aws lambda wait function-updated --function-name "$FN"
+            aws lambda update-function-configuration --function-name "$FN" \
+              --memory-size 2048 --timeout 180 --environment file://env.json > /dev/null
+          else
+            aws lambda create-function --function-name "$FN" --package-type Image \
+              --code ImageUri="${{ steps.img.outputs.uri }}" --role "${{ steps.cfn.outputs.lrole }}" \
+              --architectures x86_64 --memory-size 2048 --timeout 180 \
+              --environment file://env.json > /dev/null
+            aws lambda wait function-active-v2 --function-name "$FN"
+          fi
+          aws lambda wait function-updated --function-name "$FN"
+          rm -f env.json
+          echo "function ready"
+
+      - name: Create or update schedule (every 10 min, 06:00-23:50 JST)
+        run: |
+          ARN=$(aws lambda get-function --function-name "$FN" --query Configuration.FunctionArn --output text)
+          T="{\"Arn\":\"$ARN\",\"RoleArn\":\"${{ steps.cfn.outputs.srole }}\",\"Input\":\"{}\",\"RetryPolicy\":{\"MaximumRetryAttempts\":0}}"
+          ARGS=(--name daily-check --schedule-expression "cron(0/10 6-23 * * ? *)" \
+            --schedule-expression-timezone Asia/Tokyo --flexible-time-window Mode=OFF --target "$T")
+          if aws scheduler get-schedule --name daily-check > /dev/null 2>&1; then
+            aws scheduler update-schedule "${ARGS[@]}" > /dev/null
+          else
+            aws scheduler create-schedule "${ARGS[@]}" > /dev/null
+          fi
+          echo "schedule ready"
+
+      - name: Test invoke
+        run: |
+          P='{}'
+          if [ "${{ inputs.test_mail }}" = "true" ]; then P='{"test_mail":true}'; fi
+          aws lambda invoke --function-name "$FN" --cli-binary-format raw-in-base64-out \
+            --cli-read-timeout 200 --payload "$P" out.json --query FunctionError --output text || true
+          echo "result: $(cat out.json)"
+          grep -q '"open"' out.json || grep -q '"skipped"' out.json

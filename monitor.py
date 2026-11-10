@@ -16,6 +16,9 @@ from playwright.sync_api import sync_playwright
 
 BASE, CATEGORY, FACILITY, ROOM = (s.strip() for s in os.environ["TARGET"].split("|"))
 STATE_FILE = Path(os.environ.get("STATE_FILE", ".state/state.json"))
+STATE_BUCKET = os.environ.get("STATE_BUCKET")  # set on AWS: state is kept in S3
+STATE_KEY = "state.json"
+CHROMIUM_ARGS = os.environ.get("CHROMIUM_ARGS", "").split()
 MAX_PAGES = 3
 JST = timezone(timedelta(hours=9))
 YOUBI = "月火水木金土日"
@@ -109,7 +112,7 @@ def fmt_day(ymd):
 
 def collect():
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = p.chromium.launch(args=CHROMIUM_ARGS)
         page = browser.new_page(locale="ja-JP")
         page.set_default_timeout(30000)
 
@@ -198,13 +201,36 @@ def send_test(now):
     send("【空き通知】テスト送信", body)
 
 
+def load_state():
+    if STATE_BUCKET:
+        import boto3
+        try:
+            body = boto3.client("s3").get_object(Bucket=STATE_BUCKET, Key=STATE_KEY)["Body"].read()
+            return json.loads(body)
+        except Exception as e:
+            if "NoSuchKey" in type(e).__name__ or "NoSuchKey" in str(e):
+                return []
+            raise
+    return json.loads(STATE_FILE.read_text("utf-8")) if STATE_FILE.exists() else []
+
+
+def save_state(now):
+    data = json.dumps(now, ensure_ascii=False)
+    if STATE_BUCKET:
+        import boto3
+        boto3.client("s3").put_object(Bucket=STATE_BUCKET, Key=STATE_KEY, Body=data.encode("utf-8"))
+        return
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(data, "utf-8")
+
+
 def main():
     hour = datetime.now(JST).hour
     if hour < 6 and os.environ.get("TEST_MAIL") != "true":
         print("skip: night hours")
-        return
+        return {"skipped": True}
     now = [list(s) for s in collect()]
-    prev = json.loads(STATE_FILE.read_text("utf-8")) if STATE_FILE.exists() else []
+    prev = load_state()
     new = [s for s in now if s not in prev]
     print(f"{datetime.now(JST):%Y-%m-%d %H:%M} open: {len(now)} / new: {len(new)}")
     if new:
@@ -213,8 +239,8 @@ def main():
     if os.environ.get("TEST_MAIL") == "true":
         send_test(now)
         print("test mail sent")
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(now, ensure_ascii=False), "utf-8")
+    save_state(now)
+    return {"open": len(now), "new": len(new)}
 
 
 if __name__ == "__main__":
