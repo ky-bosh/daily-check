@@ -1,0 +1,48 @@
+name: status
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "何時間分のログを見るか"
+        default: "60"
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  status:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-1
+      - name: Summarize Lambda logs (counts only)
+        env:
+          HOURS: ${{ inputs.hours }}
+        run: |
+          START=$(( ($(date +%s) - HOURS*3600) * 1000 ))
+          aws logs filter-log-events --log-group-name /aws/lambda/daily-check --start-time $START \
+            --query 'events[].[timestamp,message]' --output json > ev.json
+          python3 - <<'PY'
+          import json, re, datetime, collections
+          ev = json.load(open("ev.json"))
+          jst = datetime.timezone(datetime.timedelta(hours=9))
+          rows = []
+          for ts, msg in ev:
+              m = msg.strip()
+              if re.search(r"open: \d+ / new: \d+|skip: night|error:|Task timed out|check failed|test-notify|notified|REPORT", m):
+                  t = datetime.datetime.fromtimestamp(ts/1000, jst).strftime("%m/%d %H:%M")
+                  m = re.sub(r"https?://\S+", "<url>", m)
+                  if m.startswith("REPORT"):
+                      d = re.search(r"Duration: ([\d.]+) ms", m); mem = re.search(r"Max Memory Used: (\d+) MB", m)
+                      m = f"REPORT {float(d.group(1))/1000:.0f}s mem={mem.group(1)}MB" if d and mem else "REPORT"
+                  rows.append((t, m[:160]))
+          kinds = collections.Counter()
+          for t, m in rows:
+              k = ("ok" if "open:" in m else "night" if "night" in m else "notified" if "notified" in m
+                   else "timeout" if "timed out" in m else "error" if ("error" in m or "failed" in m) else "report" if m.startswith("REPORT") else "other")
+              kinds[k] += 1
+          print("SUMMARY", dict(kinds))
+          for t, m in rows[-40:]:
+              print("LOG", t, m)
+          PY
