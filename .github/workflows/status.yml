@@ -43,6 +43,18 @@ jobs:
                    else "timeout" if "timed out" in m else "error" if ("error" in m or "failed" in m) else "report" if m.startswith("REPORT") else "other")
               kinds[k] += 1
           print("SUMMARY", dict(kinds))
-          for t, m in rows[-40:]:
-              print("LOG", t, m)
+          print("CHANGES (runs where the open count changed, plus every run with openings)")
+          prev = None
+          for t, m in rows:
+              o = re.search(r"open: (\d+) / new: (\d+)", m)
+              if not o:
+                  if not m.startswith("REPORT") and "night" not in m:
+                      print("LOG", t, m)
+                  continue
+              n = int(o.group(1))
+              if n != prev or n > 0:
+                  print("LOG", t, m)
+              prev = n
+          for t, m in rows[-4:]:
+              print("LAST", t, m)
           PY
