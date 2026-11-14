@@ -87,11 +87,11 @@ jobs:
           rm -f env.json
           echo "function ready"
 
-      - name: Create or update schedule (every 10 min, 06:00-23:50 JST)
+      - name: Create or update schedule (fires every minute 06-23 JST; handler runs every 2 min on weekend/holiday 9-21h, else every 5 min)
         run: |
           ARN=$(aws lambda get-function --function-name "$FN" --query Configuration.FunctionArn --output text)
-          T="{\"Arn\":\"$ARN\",\"RoleArn\":\"${{ steps.cfn.outputs.srole }}\",\"Input\":\"{}\",\"RetryPolicy\":{\"MaximumRetryAttempts\":0}}"
-          ARGS=(--name daily-check --schedule-expression "cron(0/10 6-23 * * ? *)" \
+          T="{\"Arn\":\"$ARN\",\"RoleArn\":\"${{ steps.cfn.outputs.srole }}\",\"Input\":\"{\\\"scheduled\\\":true}\",\"RetryPolicy\":{\"MaximumRetryAttempts\":0}}"
+          ARGS=(--name daily-check --schedule-expression "cron(* 6-23 * * ? *)" \
             --schedule-expression-timezone Asia/Tokyo --flexible-time-window Mode=OFF --target "$T")
           if aws scheduler get-schedule --name daily-check > /dev/null 2>&1; then
             aws scheduler update-schedule "${ARGS[@]}" > /dev/null
