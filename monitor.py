@@ -69,7 +69,7 @@ def safe_error(e):
     """Error text for public logs: no URLs or target names."""
     t = f"{type(e).__name__}: {e}".splitlines()[0]
     t = re.sub(r"https?://\S+", "<url>", t)
-    for w in (BASE, CATEGORY, FACILITY, ROOM):
+    for w in (BASE, CATEGORY, FACILITY, ROOM, os.environ.get("RESERVE_ID"), os.environ.get("RESERVE_PW")):
         if w:
             t = t.replace(w, "<target>")
     return t[:200]
@@ -315,6 +315,73 @@ def run_test_notify():
     return {"test_notify": True, "open": len(slots), "sent": True, "slot_errors": SLOT_ERRORS}
 
 
+def try_reserve(new):
+    mode = os.environ.get("RESERVE_MODE", "off")
+    if mode not in ("dry", "live") or not os.environ.get("RESERVE_ID"):
+        return
+    import reserve
+    bookings = reserve.load_bookings()
+    slot = reserve.pick(new, bookings)
+    if not slot:
+        print("reserve: no bookable slot")
+        return
+    run_reserve(slot, FACILITY, ROOM, mode, bookings)
+
+
+def run_reserve(slot, facility, room, mode, bookings=None):
+    import reserve
+    title = f"{slot[0]} {slot[2]} {slot[1]}のコート"
+    try:
+        r = reserve.book(slot, facility, room, mode)
+    except reserve.Stop as e:
+        print("reserve: stopped at", STAGE)
+        send(f"【自動予約】中止：{title}", f"{facility} {room}\n{title}\n\n自動予約を途中で止めました。\n理由：{e}\n\n必要ならサイトで手動で予約してください。\n{BASE}")
+        return {"reserve": "stopped", "stage": STAGE}
+    except Exception as e:
+        print("reserve: failed at", STAGE, safe_error(e))
+        send(f"【自動予約】失敗：{title}", f"{facility} {room}\n{title}\n\n自動予約の途中でエラーになりました（段階：{STAGE}）。\n予約できているかサイトでご確認ください。\n{BASE}")
+        return {"reserve": "error", "stage": STAGE, "error": safe_error(e)}
+    if r["result"] == "dry":
+        print("reserve: dry run reached the confirm page")
+        send(f"【自動予約・試運転】申込の手前まで進みました：{title}",
+             f"{facility} {room}\n{title}\n\n試運転のため、申込ボタンは押していません（予約はされていません）。\n\n内容確認画面の表示：\n{r['detail']}")
+        return {"reserve": "dry-ok"}
+    import reserve as rv
+    d = rv.slot_date(slot)
+    if bookings is not None:
+        bookings.append({"date": d.strftime("%Y-%m-%d"), "time": slot[2], "court": slot[1],
+                         "week": rv.week_key(d), "booked_at": datetime.now(JST).isoformat(timespec="seconds")})
+        rv.save_bookings(bookings)
+    print("reserve: booked")
+    send(f"【自動予約】予約しました：{title}",
+         f"{facility} {room}\n{title}\n\n自動で予約しました。支払いは窓口です。期限をご確認ください。\n\n完了画面の表示：\n{r['detail']}\n\n予約の確認・取消：{BASE}（ログイン →「予約内容の確認・取消」）")
+    try:
+        import calendar_hook
+        calendar_hook.add(slot, facility, room, r["detail"])
+    except Exception as e:
+        print("calendar: failed", type(e).__name__)
+    return {"reserve": "booked"}
+
+
+def run_test_reserve(facility, room):
+    """Dry run on another facility that has openings (never presses 申込)."""
+    global FACILITY, ROOM, ACTIVE_ROOM
+    saved = (FACILITY, ROOM)
+    FACILITY, ROOM, ACTIVE_ROOM = facility, room, None
+    SLOT_ERRORS.clear()
+    try:
+        slots = [list(x) for x in collect()]
+    finally:
+        FACILITY, ROOM = saved
+    import reserve
+    slot = reserve.pick(slots, [])
+    print(f"test-reserve: open={len(slots)} candidate={'yes' if slot else 'no'}")
+    if not slot:
+        return {"test_reserve": True, "open": len(slots), "candidate": False, "slot_errors": SLOT_ERRORS}
+    r = run_reserve(slot, facility, room, "dry")
+    return {"test_reserve": True, "open": len(slots), **(r or {})}
+
+
 def main():
     SLOT_ERRORS.clear()
     if TEST_NOTIFY:
@@ -330,6 +397,7 @@ def main():
     if new:
         send_new(new)
         print("notified")
+        try_reserve(new)
     if os.environ.get("TEST_MAIL") == "true":
         send_test(now)
         print("test mail sent")

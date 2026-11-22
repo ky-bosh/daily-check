@@ -11,6 +11,15 @@ on:
         description: "空きのある別の部屋で通知メールを通しテストする（本番の記録は変えない）"
         type: boolean
         default: false
+      reserve_mode:
+        description: "自動予約（off=しない / dry=申込の手前で止める / live=予約する）"
+        type: choice
+        options: [dry, live, off]
+        default: dry
+      test_reserve_facility:
+        description: "（試運転用）空きのある別の施設名。入れると、その施設で申込の手前まで試す"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -63,11 +72,17 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           BUCKET: ${{ steps.cfn.outputs.bucket }}
+          RESERVE_ID: ${{ secrets.RESERVE_ID }}
+          RESERVE_PW: ${{ secrets.RESERVE_PW }}
+          RESERVE_MODE: ${{ inputs.reserve_mode }}
+          CALENDAR_HOOK_URL: ${{ secrets.CALENDAR_HOOK_URL }}
+          CALENDAR_HOOK_TOKEN: ${{ secrets.CALENDAR_HOOK_TOKEN }}
         run: |
           python3 - <<'PY' > env.json
           import json, os
-          keys = ["TARGET", "GMAIL_USER", "GMAIL_APP_PASSWORD", "MAIL_TO"]
-          v = {k: os.environ[k] for k in keys}
+          keys = ["TARGET", "GMAIL_USER", "GMAIL_APP_PASSWORD", "MAIL_TO", "RESERVE_ID", "RESERVE_PW",
+                  "RESERVE_MODE", "CALENDAR_HOOK_URL", "CALENDAR_HOOK_TOKEN"]
+          v = {k: os.environ.get(k, "") for k in keys}
           v["STATE_BUCKET"] = os.environ["BUCKET"]
           print(json.dumps({"Variables": v}))
           PY
@@ -75,11 +90,11 @@ jobs:
             aws lambda update-function-code --function-name "$FN" --image-uri "${{ steps.img.outputs.uri }}" > /dev/null
             aws lambda wait function-updated --function-name "$FN"
             aws lambda update-function-configuration --function-name "$FN" \
-              --memory-size 2048 --timeout 180 --environment file://env.json > /dev/null
+              --memory-size 2048 --timeout 300 --environment file://env.json > /dev/null
           else
             aws lambda create-function --function-name "$FN" --package-type Image \
               --code ImageUri="${{ steps.img.outputs.uri }}" --role "${{ steps.cfn.outputs.lrole }}" \
-              --architectures x86_64 --memory-size 2048 --timeout 180 \
+              --architectures x86_64 --memory-size 2048 --timeout 300 \
               --environment file://env.json > /dev/null
             aws lambda wait function-active-v2 --function-name "$FN"
           fi
@@ -101,12 +116,16 @@ jobs:
           echo "schedule ready"
 
       - name: Test invoke
+        env:
+          TRF: ${{ inputs.test_reserve_facility }}
         run: |
           P='{}'
           if [ "${{ inputs.test_mail }}" = "true" ]; then P='{"test_mail":true}'; fi
           if [ "${{ inputs.test_notify }}" = "true" ]; then P='{"test_notify":true}'; fi
+          if [ -n "$TRF" ]; then P=$(python3 -c 'import json,os;print(json.dumps({"test_reserve":True,"facility":os.environ["TRF"]}))'); fi
           aws lambda invoke --function-name "$FN" --cli-binary-format raw-in-base64-out \
-            --cli-read-timeout 200 --payload "$P" out.json --query FunctionError --output text || true
+            --cli-read-timeout 320 --payload "$P" out.json --query FunctionError --output text || true
           echo "result: $(cat out.json)"
+          if [ -n "$TRF" ]; then grep -q '"dry-ok"' out.json; exit $?; fi
           grep -q '"open"' out.json || grep -q '"skipped"' out.json
           if [ "${{ inputs.test_notify }}" = "true" ]; then grep -q '"sent": true' out.json; fi

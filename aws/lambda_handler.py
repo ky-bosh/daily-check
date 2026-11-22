@@ -12,7 +12,7 @@ PEAK_HOURS = range(9, 21)   # 09:00-20:59 on Sat/Sun/holidays -> every 2 min
 PEAK_EVERY = 2
 NORMAL_EVERY = 5            # otherwise 06:00-23:55 -> every 5 min
 LOCK_KEY = "lock.json"
-LOCK_SECONDS = 170          # a run never lasts longer than the 180 s Lambda timeout
+LOCK_SECONDS = 290          # a run never lasts longer than the 300 s Lambda timeout
 
 
 def is_peak_day(d):
@@ -71,7 +71,7 @@ def handler(event, context):
         os.environ["TEST_MAIL"] = "true"
     else:
         os.environ.pop("TEST_MAIL", None)
-    if not event.get("test_notify") and not acquire_lock():
+    if not (event.get("test_notify") or event.get("test_reserve")) and not acquire_lock():
         print("skip: previous run still going")
         return {"skipped": "locked"}
 
@@ -80,12 +80,14 @@ def handler(event, context):
     monitor.TEST_NOTIFY = bool(event.get("test_notify"))
     monitor.ACTIVE_ROOM = None
     try:
+        if event.get("test_reserve"):
+            return monitor.run_test_reserve(event["facility"], event.get("room", monitor.ROOM))
         return monitor.main()
     except Exception as e:
         print("error:", type(e).__name__, "at", monitor.STAGE)
         raise RuntimeError(f"check failed at {monitor.STAGE}: {type(e).__name__}") from None
     finally:
-        if not event.get("test_notify"):
+        if not (event.get("test_notify") or event.get("test_reserve")):
             try:
                 release_lock()
             except Exception:
