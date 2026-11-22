@@ -6,7 +6,7 @@ import urllib.request
 
 
 
-def add(slot, facility, room, detail):
+def add(slot, facility, room, detail, title_prefix=""):
     url, token = os.environ.get("CALENDAR_HOOK_URL"), os.environ.get("CALENDAR_HOOK_TOKEN")
     if not url or not token:
         print("calendar: not configured")
@@ -19,13 +19,14 @@ def add(slot, facility, room, detail):
         "date": d.strftime("%Y-%m-%d"),
         "start": start,
         "end": end,
-        "title": f"テニス（{facility} {room}）",
+        "title": f"{title_prefix}テニス（{facility} {room}）",
         "location": facility,
         "description": f"{slot[1]}のコート\n自動予約。支払いは当日受付で\n\n{detail}",
         "cancel_deadline": reserve.cancel_deadline(slot).strftime("%Y-%m-%d"),
     }
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=20) as r:
-        ok = r.status == 200
-    print("calendar:", "added" if ok else f"status {r.status}")
+    with urllib.request.urlopen(req, timeout=30) as r:
+        text = r.read().decode("utf-8", "replace").strip()
+    ok = text == "ok"
+    print("calendar:", "added" if ok else f"answer={text[:40]}")
     return ok

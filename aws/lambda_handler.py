@@ -61,7 +61,7 @@ def release_lock():
 
 def handler(event, context):
     event = event or {}
-    manual = bool(event.get("test_mail") or event.get("test_notify") or event.get("force"))
+    manual = bool(event.get("test_mail") or event.get("test_notify") or event.get("test_calendar") or event.get("force"))
     if event.get("scheduled") and not manual:
         # round to the nearest minute: the scheduler may fire a few seconds late
         now = datetime.now(JST) + timedelta(seconds=20)
@@ -71,7 +71,7 @@ def handler(event, context):
         os.environ["TEST_MAIL"] = "true"
     else:
         os.environ.pop("TEST_MAIL", None)
-    if not (event.get("test_notify") or event.get("test_reserve")) and not acquire_lock():
+    if not (event.get("test_notify") or event.get("test_reserve") or event.get("test_calendar")) and not acquire_lock():
         print("skip: previous run still going")
         return {"skipped": "locked"}
 
@@ -80,6 +80,11 @@ def handler(event, context):
     monitor.TEST_NOTIFY = bool(event.get("test_notify"))
     monitor.ACTIVE_ROOM = None
     try:
+        if event.get("test_calendar"):
+            import calendar_hook
+            slot = ["2026年12月31日(木)", "1番目", "9:00～11:00", "○"]
+            ok = calendar_hook.add(slot, monitor.FACILITY, monitor.ROOM, "動作確認用のテスト予定です。確認後に削除します。", "【テスト】")
+            return {"test_calendar": True, "added": ok}
         if event.get("test_reserve"):
             return monitor.run_test_reserve(event["facility"], event.get("room", monitor.ROOM))
         return monitor.main()

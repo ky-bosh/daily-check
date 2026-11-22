@@ -16,6 +16,10 @@ on:
         type: choice
         options: [dry, live, off]
         default: dry
+      test_calendar:
+        description: "（動作確認用）boshカレンダーに【テスト】の予定を1件登録する"
+        type: boolean
+        default: false
       test_reserve_facility:
         description: "（試運転用）空きのある別の施設名。入れると、その施設で申込の手前まで試す"
         type: string
@@ -122,10 +126,12 @@ jobs:
           P='{}'
           if [ "${{ inputs.test_mail }}" = "true" ]; then P='{"test_mail":true}'; fi
           if [ "${{ inputs.test_notify }}" = "true" ]; then P='{"test_notify":true}'; fi
+          if [ "${{ inputs.test_calendar }}" = "true" ]; then P='{"test_calendar":true}'; fi
           if [ -n "$TRF" ]; then P=$(python3 -c 'import json,os;print(json.dumps({"test_reserve":True,"facility":os.environ["TRF"]}))'); fi
           aws lambda invoke --function-name "$FN" --cli-binary-format raw-in-base64-out \
             --cli-read-timeout 320 --payload "$P" out.json --query FunctionError --output text || true
           echo "result: $(cat out.json)"
           if [ -n "$TRF" ]; then grep -q '"dry-ok"' out.json; exit $?; fi
+          if [ "${{ inputs.test_calendar }}" = "true" ]; then grep -q '"added": true' out.json; exit $?; fi
           grep -q '"open"' out.json || grep -q '"skipped"' out.json
           if [ "${{ inputs.test_notify }}" = "true" ]; then grep -q '"sent": true' out.json; fi
