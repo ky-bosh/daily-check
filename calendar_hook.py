@@ -3,6 +3,9 @@ Env: CALENDAR_HOOK_URL, CALENDAR_HOOK_TOKEN. Does nothing when not configured.""
 import json
 import os
 import urllib.request
+from datetime import datetime, timedelta
+
+PAY_DAYS = int(os.environ.get("PAY_DAYS", "7"))  # 窓口支払いの期限（仮：予約から7日。施設に要確認）
 
 
 def add(slot, facility, room, detail):
@@ -21,6 +24,7 @@ def add(slot, facility, room, detail):
         "title": f"テニス（{facility} {room}）",
         "location": facility,
         "description": f"{slot[1]}のコート\n自動予約\n\n{detail}",
+        "pay_due": (datetime.now(reserve.m.JST) + timedelta(days=PAY_DAYS)).strftime("%Y-%m-%d"),
     }
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=20) as r:

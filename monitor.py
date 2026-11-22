@@ -53,10 +53,11 @@ def open_calendar(page):
     postback(page, "next")
     stage("calendar")
     page.evaluate(
-        """() => {
-        ['checkYobi6','checkYobi7','checkYobi8'].forEach(id => document.getElementById(id).checked = true);
+        """(allDays) => {
+        if (!allDays) ['checkYobi6','checkYobi7','checkYobi8'].forEach(id => document.getElementById(id).checked = true);
         document.getElementById('radioPeriod1month').checked = true;
-    }"""
+    }""",
+        ALL_DAYS,
     )
     with page.expect_navigation(wait_until="load"):
         page.click("#btnHyoji")
@@ -75,6 +76,7 @@ def safe_error(e):
     return t[:200]
 
 
+ALL_DAYS = False  # test only: look at weekdays too
 TEST_NOTIFY = False  # set by the Lambda handler for an end-to-end test
 ACTIVE_ROOM = None
 
@@ -365,9 +367,9 @@ def run_reserve(slot, facility, room, mode, bookings=None):
 
 def run_test_reserve(facility, room):
     """Dry run on another facility that has openings (never presses 申込)."""
-    global FACILITY, ROOM, ACTIVE_ROOM
+    global FACILITY, ROOM, ACTIVE_ROOM, ALL_DAYS
     saved = (FACILITY, ROOM)
-    FACILITY, ROOM, ACTIVE_ROOM = facility, room, None
+    FACILITY, ROOM, ACTIVE_ROOM, ALL_DAYS = facility, room, None, True
     SLOT_ERRORS.clear()
     try:
         slots = [list(x) for x in collect()]
@@ -375,10 +377,15 @@ def run_test_reserve(facility, room):
         FACILITY, ROOM = saved
     import reserve
     slot = reserve.pick(slots, [])
+    if not slot:
+        ALL_DAYS = False
     print(f"test-reserve: open={len(slots)} candidate={'yes' if slot else 'no'}")
     if not slot:
         return {"test_reserve": True, "open": len(slots), "candidate": False, "slot_errors": SLOT_ERRORS}
-    r = run_reserve(slot, facility, room, "dry")
+    try:
+        r = run_reserve(slot, facility, room, "dry")
+    finally:
+        ALL_DAYS = False
     return {"test_reserve": True, "open": len(slots), **(r or {})}
 
 
