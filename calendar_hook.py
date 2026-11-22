@@ -24,9 +24,16 @@ def add(slot, facility, room, detail, title_prefix=""):
         "description": f"{slot[1]}のコート\n自動予約。支払いは当日受付で\n\n{detail}",
         "cancel_deadline": reserve.cancel_deadline(slot).strftime("%Y-%m-%d"),
     }
+    url = url.strip()
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        text = r.read().decode("utf-8", "replace").strip()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            text = r.read().decode("utf-8", "replace").strip()
+    except Exception as e:
+        import re
+        reason = re.sub(r"https?://\S+", "<url>", f"{type(e).__name__}: {getattr(e, 'reason', e)}")[:200]
+        print("calendar: error", reason)
+        return reason
     ok = text == "ok"
     print("calendar:", "added" if ok else f"answer={text[:40]}")
     return ok
