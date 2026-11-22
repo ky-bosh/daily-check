@@ -221,8 +221,20 @@ def click_button(page, text):
         btn.click()
 
 
+def clean_tmp():
+    """Remove leftover Chromium profiles/shared memory files from earlier browsers in this container."""
+    import glob
+    import shutil
+    for pth in glob.glob("/tmp/playwright*") + glob.glob("/tmp/.org.chromium.*") + glob.glob("/tmp/.com.google.*"):
+        shutil.rmtree(pth, ignore_errors=True) if os.path.isdir(pth) else os.remove(pth)
+
+
 def book(slot, facility, room, mode):
     """Returns dict(result=..., detail=page text)."""
+    try:
+        clean_tmp()
+    except Exception:
+        pass
     ymd = slot_date(slot).strftime("%Y%m%d")
     court = int(re.match(r"(\d+)", slot[1]).group(1))
     saved = (m.FACILITY, m.ROOM)

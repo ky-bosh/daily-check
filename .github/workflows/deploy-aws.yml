@@ -90,11 +90,11 @@ jobs:
             aws lambda update-function-code --function-name "$FN" --image-uri "${{ steps.img.outputs.uri }}" > /dev/null
             aws lambda wait function-updated --function-name "$FN"
             aws lambda update-function-configuration --function-name "$FN" \
-              --memory-size 2048 --timeout 300 --environment file://env.json > /dev/null
+              --memory-size 3008 --timeout 300 --ephemeral-storage Size=2048 --environment file://env.json > /dev/null
           else
             aws lambda create-function --function-name "$FN" --package-type Image \
               --code ImageUri="${{ steps.img.outputs.uri }}" --role "${{ steps.cfn.outputs.lrole }}" \
-              --architectures x86_64 --memory-size 2048 --timeout 300 \
+              --architectures x86_64 --memory-size 3008 --timeout 300 --ephemeral-storage Size=2048 \
               --environment file://env.json > /dev/null
             aws lambda wait function-active-v2 --function-name "$FN"
           fi
