@@ -59,6 +59,56 @@ def release_lock():
         s3.put_object(Bucket=bucket, Key=LOCK_KEY, Body=b'{"until": 0}')
 
 
+FAIL_KEY = "failures.json"
+FAIL_ALERT_AT = 3   # consecutive failed checks before an alert mail
+
+
+def _read_fail():
+    s3, bucket = _s3()
+    if not bucket:
+        return None
+    try:
+        return json.loads(s3.get_object(Bucket=bucket, Key=FAIL_KEY)["Body"].read())
+    except Exception:
+        return {"count": 0, "first": "", "alerted": False}
+
+
+def _write_fail(state):
+    s3, bucket = _s3()
+    if bucket:
+        s3.put_object(Bucket=bucket, Key=FAIL_KEY, Body=json.dumps(state, ensure_ascii=False).encode())
+
+
+def record_result(monitor, ok, stage=""):
+    """Count consecutive failures; mail once when it reaches FAIL_ALERT_AT, and once on recovery."""
+    try:
+        st = _read_fail()
+        if st is None:
+            return
+        now = datetime.now(JST).strftime("%m/%d %H:%M")
+        if ok:
+            if st.get("alerted"):
+                monitor.send("【空き監視】復旧しました",
+                             f"監視が正常に戻りました（{now}）。\n失敗が続いていた期間：{st.get('first')} 〜 {now}\n"
+                             "この間に出た空きは見逃している可能性があります。")
+            if st.get("count"):
+                _write_fail({"count": 0, "first": "", "alerted": False})
+            return
+        st["count"] = st.get("count", 0) + 1
+        st["first"] = st.get("first") or now
+        st["last_stage"] = stage
+        if st["count"] >= FAIL_ALERT_AT and not st.get("alerted"):
+            monitor.send("【空き監視】失敗が続いています",
+                         f"空きの確認が{st['count']}回続けて失敗しています（{st['first']} 〜 {now}）。\n"
+                         f"止まった段階：{stage}\n\nこの間は空きを見逃している可能性があります。\n"
+                         "サイトの不調・メンテナンス、または画面の変更が考えられます。\n"
+                         "復旧したら「復旧しました」のメールが届きます。")
+            st["alerted"] = True
+        _write_fail(st)
+    except Exception as e:
+        print("fail-alert: error", type(e).__name__)
+
+
 def handler(event, context):
     event = event or {}
     manual = bool(event.get("test_mail") or event.get("test_notify") or event.get("test_calendar") or event.get("force"))
@@ -87,9 +137,14 @@ def handler(event, context):
             return {"test_calendar": True, "added": ok}
         if event.get("test_reserve"):
             return monitor.run_test_reserve(event["facility"], event.get("room", monitor.ROOM))
-        return monitor.main()
+        result = monitor.main()
+        if not (result or {}).get("skipped"):
+            record_result(monitor, True)
+        return result
     except Exception as e:
         print("error:", type(e).__name__, "at", monitor.STAGE)
+        if not (event.get("test_notify") or event.get("test_reserve") or event.get("test_calendar")):
+            record_result(monitor, False, monitor.STAGE)
         raise RuntimeError(f"check failed at {monitor.STAGE}: {type(e).__name__}") from None
     finally:
         if not (event.get("test_notify") or event.get("test_reserve")):
