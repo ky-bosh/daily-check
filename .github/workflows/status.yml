@@ -30,7 +30,7 @@ jobs:
           rows = []
           for ts, msg in ev:
               m = msg.strip()
-              if re.search(r"open: \d+ / new: \d+|skip: night|error:|Task timed out|check failed|test-notify|notified|REPORT", m):
+              if re.search(r"open: \d+ / new: \d+|skip: night|error:|Task timed out|check failed|test-notify|notified|reserve:|calendar:|REPORT", m):
                   t = datetime.datetime.fromtimestamp(ts/1000, jst).strftime("%m/%d %H:%M")
                   m = re.sub(r"https?://\S+", "<url>", m)
                   if m.startswith("REPORT"):
