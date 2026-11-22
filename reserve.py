@@ -105,12 +105,20 @@ def login(page):
     page.wait_for_timeout(1500)
     if page.locator("#userID").count() == 0:
         m.postback(page, "login")
-    page.fill("#userID", os.environ["RESERVE_ID"])
-    page.fill("#passWord", os.environ["RESERVE_PW"])
+    uid, pw = os.environ.get("RESERVE_ID", ""), os.environ.get("RESERVE_PW", "")
+    if not uid or not pw:
+        raise Stop("IDまたはパスワードがLambdaに渡っていません（GitHub Secrets の RESERVE_ID / RESERVE_PW を確認し、deploy-aws を実行し直してください）")
+    page.fill("#userID", uid)
+    page.fill("#passWord", pw)
     m.postback(page, "nextlogin")
-    page.wait_for_timeout(1000)
+    page.wait_for_timeout(1500)
     if page.locator("#passWord").count() and page.locator("#passWord").is_visible():
-        raise Stop("ログインできませんでした（IDまたはパスワードを確認してください）")
+        body = page.inner_text("body")
+        hints = [x.strip() for x in body.splitlines()
+                 if re.search(r"エラー|正しく|誤り|違い|ロック|無効|期限|入力してください|できません", x) and len(x.strip()) < 80]
+        diag = (f"\n画面：{page.url.split('/')[-1]}\nID文字数：{len(uid)} / パスワード文字数：{len(pw)}"
+                f"\n画面のメッセージ：{' / '.join(hints[:5]) or '（なし）'}")
+        raise Stop("ログインできませんでした" + diag)
 
 
 def goto_month_with(page, ymd):
