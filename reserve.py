@@ -18,7 +18,11 @@ FORM = {  # values typed into the 詳細申請 form
     "申請項目": os.environ.get("RESERVE_EVENT", "テニス練習"),
 }
 KNOWN_FIELDS = set(FORM)
-MIN_DAYS_AHEAD = 7       # the system takes web bookings up to 7 days before the date
+MIN_DAYS_AHEAD = int(os.environ.get("RESERVE_MIN_DAYS", "10"))
+# Web booking is possible up to 7 days before, and free cancellation also ends 7 days before
+# (same weekday). Booking only slots >= 10 days ahead leaves >= 3 days to decide.
+FREE_CANCEL_DAYS = 7
+CANCEL_RULE = re.compile(r"キャンセルは、?ご利用日の1週間前")  # must appear on the confirm page
 BOOKINGS_KEY = "bookings.json"
 
 
@@ -263,6 +267,9 @@ def book(slot, facility, room, mode):
             if "申込" not in body:
                 raise Stop("内容確認の画面に進めませんでした")
             confirm = summarize(body)
+            if mode == "live" and not CANCEL_RULE.search(body.replace("１", "1")):
+                browser.close()
+                raise Stop("内容確認画面のキャンセル規定が想定（利用日の1週間前まで無料）と違うため、申込ボタンを押さずに止めました。\n\n画面の表示：\n" + confirm)
             if mode != "live":
                 browser.close()
                 return {"result": "dry", "detail": confirm}
@@ -279,5 +286,9 @@ def book(slot, facility, room, mode):
 
 def summarize(body):
     lines = [x.strip() for x in body.splitlines() if x.strip()]
-    keep = [x for x in lines if re.search(r"施設|利用日|時間帯|予約番号|受付番号|申込番号|料金|金額|支払|期限|人数|目的|行事|\d{4}/\d{1,2}/\d{1,2}|～", x)]
+    keep = [x for x in lines if re.search(r"施設|利用日|時間帯|予約番号|受付番号|申込番号|料金|金額|支払|期限|人数|目的|行事|キャンセル|\d{4}/\d{1,2}/\d{1,2}|～", x)]
     return "\n".join(keep[:40])
+
+
+def cancel_deadline(slot):
+    return slot_date(slot) - timedelta(days=FREE_CANCEL_DAYS)

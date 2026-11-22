@@ -355,8 +355,12 @@ def run_reserve(slot, facility, room, mode, bookings=None):
                          "week": rv.week_key(d), "booked_at": datetime.now(JST).isoformat(timespec="seconds")})
         rv.save_bookings(bookings)
     print("reserve: booked")
+    dl = rv.cancel_deadline(slot)
     send(f"【自動予約】予約しました：{title}",
-         f"{facility} {room}\n{title}\n\n自動で予約しました。支払いは窓口です。期限をご確認ください。\n\n完了画面の表示：\n{r['detail']}\n\n予約の確認・取消：{BASE}（ログイン →「予約内容の確認・取消」）")
+         f"{facility} {room}\n{title}\n\n自動で予約しました。\n"
+         f"・無料でキャンセルできる期限：{dl.month}/{dl.day}({YOUBI[dl.weekday()]}) まで（システムの「予約内容の確認・取消」から）\n"
+         f"・それ以降のキャンセルは電話か窓口で、規定の利用料がかかります\n"
+         f"・支払いは利用当日に受付で\n\n完了画面の表示：\n{r['detail']}\n\n予約の確認・取消：{BASE}（ログイン →「予約内容の確認・取消」）")
     try:
         import calendar_hook
         calendar_hook.add(slot, facility, room, r["detail"])

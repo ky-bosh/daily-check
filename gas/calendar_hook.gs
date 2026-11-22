@@ -1,7 +1,6 @@
 /**
- * daily-check → Googleカレンダー「bosh」に予約を登録する Web アプリ
- * 1. スクリプトのプロパティに TOKEN を設定（Secrets の CALENDAR_HOOK_TOKEN と同じ値）
- * 2. デプロイ → 新しいデプロイ → 種類「ウェブアプリ」、実行ユーザー「自分」、アクセス「全員」
+ * daily-check → Googleカレンダー「bosh」に自動予約したテニスを登録する Web アプリ
+ * 設定：スクリプトのプロパティ TOKEN に、GitHub Secrets の CALENDAR_HOOK_TOKEN と同じ値を入れる
  */
 const CALENDAR_NAME = 'bosh';   // このカレンダー以外には書き込まない
 
@@ -13,23 +12,25 @@ function doPost(e) {
   const cals = CalendarApp.getCalendarsByName(CALENDAR_NAME);
   if (cals.length !== 1) return ContentService.createTextOutput('calendar not found');
   const cal = cals[0];
+  const at = (d, hm) => new Date(d + 'T' + (hm.length === 4 ? '0' + hm : hm) + ':00+09:00');
 
-  // テニスの予定：10分前と前日20時ごろに通知
-  const start = new Date(p.date + 'T' + p.start.padStart(5, '0') + ':00+09:00');
-  const end = new Date(p.date + 'T' + p.end.padStart(5, '0') + ':00+09:00');
+  // テニスの予定：10分前と前日20:00に通知
+  const start = at(p.date, p.start), end = at(p.date, p.end);
   const ev = cal.createEvent(p.title, start, end, {location: p.location, description: p.description});
   ev.removeAllReminders();
   ev.addPopupReminder(10);
-  ev.addPopupReminder(Math.round((start - new Date(p.date + 'T20:00:00+09:00')) / 60000) + 24 * 60);
+  ev.addPopupReminder(Math.round((start - at(p.date, '20:00')) / 60000) + 24 * 60);
 
-  // 窓口支払い期限（終日の予定）：前日9:00と前日21:00に通知（終日予定は当日朝の通知を設定できない）
-  if (p.pay_due) {
-    const due = new Date(p.pay_due + 'T00:00:00+09:00');
-    const pay = cal.createAllDayEvent('【支払い期限】' + p.title + '（窓口）', due,
-      {description: '自動予約したテニスの使用料を窓口で支払う期限（仮：予約から7日。施設に要確認）\n利用日：' + p.date + ' ' + p.start + '～' + p.end});
-    pay.removeAllReminders();
-    pay.addPopupReminder(15 * 60);   // 前日 9:00
-    pay.addPopupReminder(3 * 60);    // 前日 21:00
+  // 無料キャンセル期限：期限日の9:00に予定を作り、10分前と前日9:00に通知
+  if (p.cancel_deadline) {
+    const s = at(p.cancel_deadline, '09:00');
+    const c = cal.createEvent('【無料キャンセル期限】' + p.title, s, new Date(s.getTime() + 30 * 60000), {
+      description: '今日までなら、予約システムの「予約内容の確認・取消」から無料でキャンセルできます。\n' +
+                   '明日以降は電話か窓口での取消になり、規定の利用料がかかります。\n\n利用日：' +
+                   p.date + ' ' + p.start + '～' + p.end + '\nhttps://www2.pf489.com/Toshima/WebR/'});
+    c.removeAllReminders();
+    c.addPopupReminder(10);
+    c.addPopupReminder(24 * 60);
   }
   return ContentService.createTextOutput('ok');
 }
