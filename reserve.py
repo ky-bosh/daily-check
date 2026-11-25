@@ -22,7 +22,7 @@ MIN_DAYS_AHEAD = int(os.environ.get("RESERVE_MIN_DAYS", "10"))
 # Web booking is possible up to 7 days before, and free cancellation also ends 7 days before
 # (same weekday). Booking only slots >= 10 days ahead leaves >= 3 days to decide.
 FREE_CANCEL_DAYS = 7
-CANCEL_RULE = re.compile(r"キャンセルは、?ご利用日の1週間前")  # must appear on the confirm page
+CANCEL_RULE = re.compile(r"キャンセルは、?(?:ご利用日|使用日|利用日)の1週間前")  # must appear on the confirm page
 BOOKINGS_KEY = "bookings.json"
 
 
